@@ -10,3 +10,5 @@ override.tf.json
 *_override.tf.json
 *.tfvars
 !terraform.tfvars.example
+__pycache__/
+*.pyc

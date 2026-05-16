@@ -228,6 +228,34 @@ aws apigateway test-invoke-method `
   --region us-east-1
 ```
 
+## Automated Smoke Test
+
+After `terraform apply`, run the local test tool:
+
+```powershell
+python tools/test_stack.py
+```
+
+It checks:
+
+- the web application URL returns HTTP `200`
+- the inventory API rejects unsigned browser-style requests with `401` or `403`
+- API Gateway can invoke the `/inventory` method through AWS CLI credentials
+
+To pass URLs manually:
+
+```powershell
+python tools/test_stack.py `
+  --web-url "http://your-alb-url" `
+  --api-url "https://your-api-id.execute-api.us-east-1.amazonaws.com/dev/inventory"
+```
+
+For CI-friendly JSON:
+
+```powershell
+python tools/test_stack.py --json
+```
+
 ## Cost Warning
 
 This production-grade version can create AWS charges. The most important billable resources are:
