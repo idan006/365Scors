@@ -108,12 +108,40 @@ That is expected because normal browser requests are not AWS SigV4 signed.
 - AWS CLI installed and available on `PATH`
 - AWS credentials configured locally
 - IAM permissions to manage EC2, VPC, ELB, Auto Scaling, Lambda, IAM, API Gateway, and Resource Groups Tagging API
+- Access to the Terraform remote state backend in S3
 
 Verify local AWS credentials:
 
 ```powershell
 aws sts get-caller-identity
 ```
+
+## Remote Terraform State
+
+Terraform state is stored remotely in S3 and protected with Terraform's S3 native lockfile.
+
+Backend resources:
+
+```text
+S3 bucket:      365scores-idan-webapp-tfstate-577424505362-us-east-1
+State key:      365scores-idan-webapp/dev/terraform.tfstate
+Region:         us-east-1
+```
+
+The S3 bucket has:
+
+- public access blocked
+- server-side encryption enabled
+- versioning enabled
+- native Terraform lockfile support enabled by the backend
+
+If you clone this repository on a new machine, run:
+
+```powershell
+terraform init
+```
+
+Terraform will connect to the remote backend automatically.
 
 ## Configuration
 
