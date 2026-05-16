@@ -192,7 +192,7 @@ variable "api_throttle_burst_limit" {
 variable "lambda_reserved_concurrent_executions" {
   description = "Reserved concurrency for the inventory Lambda. Use -1 for unreserved concurrency."
   type        = number
-  default     = 5
+  default     = -1
 }
 
 variable "alarm_actions" {

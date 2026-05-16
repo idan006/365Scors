@@ -133,7 +133,7 @@ max_size                            = 4
 log_retention_days                  = 30
 api_throttle_rate_limit             = 20
 api_throttle_burst_limit            = 40
-lambda_reserved_concurrent_executions = 5
+lambda_reserved_concurrent_executions = -1
 ```
 
 Browser-facing HTTPS requires a real domain in Route 53:
