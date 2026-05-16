@@ -1,9 +1,11 @@
 resource "aws_lb" "this" {
-  name               = substr("${local.name_prefix}-alb", 0, 32)
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb.id]
-  subnets            = aws_subnet.public[*].id
+  name                       = substr("${local.name_prefix}-alb", 0, 32)
+  internal                   = false
+  load_balancer_type         = "application"
+  security_groups            = [aws_security_group.alb.id]
+  subnets                    = aws_subnet.public[*].id
+  drop_invalid_header_fields = true
+  enable_deletion_protection = var.enable_deletion_protection
 
   tags = {
     Name = "${local.name_prefix}-alb"

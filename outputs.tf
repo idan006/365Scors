@@ -39,3 +39,8 @@ output "inventory_api_url" {
   description = "IAM-secured API endpoint for AWS service inventory."
   value       = "${aws_api_gateway_stage.inventory.invoke_url}/inventory"
 }
+
+output "waf_web_acl_arn" {
+  description = "ARN of the WAF web ACL associated with the ALB, if enabled."
+  value       = var.enable_waf ? aws_wafv2_web_acl.alb[0].arn : null
+}

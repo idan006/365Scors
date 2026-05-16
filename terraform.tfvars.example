@@ -19,7 +19,19 @@ enable_nat_gateway = true
 single_nat_gateway = true
 min_size           = 2
 desired_capacity   = 2
-max_size           = 2
+max_size           = 4
+
+# Production hardening. These add observability and protection, but may add AWS cost.
+enable_waf                           = true
+enable_vpc_flow_logs                 = true
+enable_asg_cpu_scaling               = true
+asg_target_cpu_utilization           = 50
+enable_deletion_protection           = false
+log_retention_days                   = 30
+api_throttle_rate_limit              = 20
+api_throttle_burst_limit             = 40
+lambda_reserved_concurrent_executions = 5
+alarm_actions                        = []
 
 tags = {
   Owner = "365Scores"

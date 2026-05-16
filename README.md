@@ -1,47 +1,56 @@
 # 365Scores AWS Terraform Infrastructure
 
-This Terraform project deploys a simple AWS web application environment for `365scores-idan-webapp`.
+Terraform for a production-oriented AWS web application stack for `365scores-idan-webapp`.
 
-It currently includes:
+The stack is currently destroyed. Running `terraform plan` from this folder shows the resources that would be created from the remote S3 state.
 
-- A VPC in `us-east-1`
+## What It Builds
+
+- VPC in `us-east-1`
 - Two public subnets across two Availability Zones
 - Two private application subnets across two Availability Zones
-- An Internet Gateway and public route table
+- Internet Gateway and public routing
 - NAT Gateway egress for private EC2 instances
-- An Application Load Balancer
-- Two `t3.micro` EC2 instances managed by an Auto Scaling Group
-- nginx installed on each EC2 instance by user data
-- Security groups that allow public HTTP traffic to the ALB and ALB-only traffic to EC2
-- An AWS Lambda function written in Python
-- An IAM-secured API Gateway endpoint for AWS inventory reporting
+- Public Application Load Balancer
+- EC2 Auto Scaling Group running nginx in private subnets
+- HTTPS from ALB to EC2 when `enable_backend_tls = true`
+- IAM-secured API Gateway endpoint
+- Python Lambda inventory API
+- AWS WAFv2 managed rules on the ALB
+- CloudWatch logs for Lambda, API Gateway, and VPC Flow Logs
+- CloudWatch alarms for ALB 5xx and unhealthy targets
+- API Gateway access logs, metrics, throttling, and X-Ray tracing
+- Lambda X-Ray tracing and reserved concurrency
+- Least-privilege inventory Lambda IAM policy
+- S3 remote state with native Terraform locking
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    user["User / Browser"] -->|HTTP :80| alb["Application Load Balancer"]
+    user["User / Browser"] -->|HTTP or HTTPS| waf["AWS WAFv2"]
+    waf --> alb["Application Load Balancer"]
 
     subgraph aws["AWS Account"]
-        subgraph vpc["VPC: 10.0.0.0/16"]
+        subgraph vpc["VPC 10.0.0.0/16"]
             igw["Internet Gateway"]
 
             subgraph az1["us-east-1a"]
                 pub1["Public Subnet 10.0.0.0/24"]
                 priv1["Private Subnet 10.0.2.0/24"]
                 nat["NAT Gateway"]
-                ec2a["EC2 t3.micro\nnginx web server"]
+                ec2a["EC2 nginx"]
             end
 
             subgraph az2["us-east-1b"]
                 pub2["Public Subnet 10.0.1.0/24"]
                 priv2["Private Subnet 10.0.3.0/24"]
-                ec2b["EC2 t3.micro\nnginx web server"]
+                ec2b["EC2 nginx"]
             end
 
-            alb --> target_group["ALB Target Group"]
-            target_group --> ec2a
-            target_group --> ec2b
+            alb -->|HTTPS 443 backend| tg["ALB Target Group"]
+            tg --> ec2a
+            tg --> ec2b
 
             pub1 --- igw
             pub2 --- igw
@@ -52,157 +61,112 @@ flowchart TB
             priv2 --- ec2b
         end
 
-        asg["Auto Scaling Group\nmin=2 desired=2 max=2"] --> ec2a
+        asg["Auto Scaling Group min=2 desired=2 max=4"] --> ec2a
         asg --> ec2b
+        cpu["CPU Target Tracking"] --> asg
 
-        caller["AWS IAM Signed Client"] -->|SigV4 HTTPS| api["API Gateway\nAWS_IAM auth"]
-        api --> lambda["Lambda: aws_inventory_api.py"]
+        caller["AWS IAM Signed Client"] -->|SigV4 HTTPS| api["API Gateway AWS_IAM"]
+        api --> lambda["Lambda aws_inventory_api.py"]
         lambda --> tagging["Resource Groups Tagging API"]
-        lambda --> ec2api["EC2 Describe Regions"]
+        lambda --> ec2api["EC2 DescribeRegions"]
+
+        api --> apilogs["CloudWatch API Logs"]
+        lambda --> lambdalogs["CloudWatch Lambda Logs"]
+        vpc --> flowlogs["CloudWatch VPC Flow Logs"]
+        alb --> alarms["CloudWatch Alarms"]
     end
 ```
-
-## Current Live Outputs
-
-Web application:
-
-```text
-http://365scores-idan-webapp-dev-alb-1635444553.us-east-1.elb.amazonaws.com
-```
-
-Inventory API:
-
-```text
-https://dapa452mth.execute-api.us-east-1.amazonaws.com/dev/inventory
-```
-
-The inventory API is secured with `AWS_IAM`. Opening it directly in a browser returns:
-
-```json
-{"message":"Missing Authentication Token"}
-```
-
-That is expected because normal browser requests are not AWS SigV4 signed.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
+| `backend.tf` | S3 remote state backend |
 | `versions.tf` | Terraform and provider version requirements |
 | `providers.tf` | AWS provider configuration |
 | `variables.tf` | Input variables |
-| `terraform.tfvars` | Active local values |
-| `network.tf` | VPC, subnets, Internet Gateway, routing |
+| `terraform.tfvars` | Active local values, ignored by git |
+| `terraform.tfvars.example` | Shareable example values |
+| `network.tf` | VPC, subnets, Internet Gateway, NAT, routing |
 | `security_groups.tf` | ALB and EC2 security groups |
-| `load_balancer.tf` | ALB, listener, and target group |
-| `compute.tf` | Launch template and Auto Scaling Group |
+| `load_balancer.tf` | ALB, listeners, and target group |
+| `compute.tf` | Launch template, ASG, and scaling policy |
 | `dns.tf` | Optional Route 53 and ACM resources |
-| `inventory_api.tf` | Lambda, IAM role, API Gateway, and deployment |
+| `inventory_api.tf` | Lambda, IAM, API Gateway, deployment, API settings |
+| `observability.tf` | CloudWatch logs, VPC Flow Logs, alarms, API Gateway log role |
+| `waf.tf` | AWS WAFv2 web ACL and ALB association |
 | `lambda/aws_inventory_api.py` | Python AWS inventory API code |
 | `user_data.sh.tftpl` | EC2 bootstrap script for nginx |
 | `outputs.tf` | Terraform outputs |
 
-## Prerequisites
+## Remote State
 
-- Terraform installed and available on `PATH`
-- AWS CLI installed and available on `PATH`
-- AWS credentials configured locally
-- IAM permissions to manage EC2, VPC, ELB, Auto Scaling, Lambda, IAM, API Gateway, and Resource Groups Tagging API
-- Access to the Terraform remote state backend in S3
-
-Verify local AWS credentials:
-
-```powershell
-aws sts get-caller-identity
-```
-
-## Remote Terraform State
-
-Terraform state is stored remotely in S3 and protected with Terraform's S3 native lockfile.
-
-Backend resources:
+Terraform state is stored in S3:
 
 ```text
-S3 bucket:      365scores-idan-webapp-tfstate-577424505362-us-east-1
-State key:      365scores-idan-webapp/dev/terraform.tfstate
-Region:         us-east-1
+Bucket: 365scores-idan-webapp-tfstate-577424505362-us-east-1
+Key:    365scores-idan-webapp/dev/terraform.tfstate
+Region: us-east-1
+Locking: Terraform S3 native lockfile
 ```
 
-The S3 bucket has:
-
-- public access blocked
-- server-side encryption enabled
-- versioning enabled
-- native Terraform lockfile support enabled by the backend
-
-If you clone this repository on a new machine, run:
+Initialize after cloning:
 
 ```powershell
 terraform init
 ```
-
-Terraform will connect to the remote backend automatically.
 
 ## Configuration
 
-Current active values are in `terraform.tfvars`:
+The active local values are in `terraform.tfvars`.
+
+Current hardening defaults include:
 
 ```hcl
-aws_region   = "us-east-1"
-project_name = "365scores-idan-webapp"
-environment  = "dev"
-
-domain_name    = ""
-hosted_zone_id = ""
-enable_https   = false
-
-instance_type      = "t3.micro"
-enable_backend_tls = true
-enable_nat_gateway = true
-single_nat_gateway = true
-min_size           = 2
-desired_capacity   = 2
-max_size           = 2
+enable_backend_tls                  = true
+enable_waf                          = true
+enable_vpc_flow_logs                = true
+enable_asg_cpu_scaling              = true
+min_size                            = 2
+desired_capacity                    = 2
+max_size                            = 4
+log_retention_days                  = 30
+api_throttle_rate_limit             = 20
+api_throttle_burst_limit            = 40
+lambda_reserved_concurrent_executions = 5
 ```
 
-Custom browser-facing HTTPS is not enabled yet because no real custom domain is configured.
+Browser-facing HTTPS requires a real domain in Route 53:
+
+```hcl
+domain_name    = "app.example.com"
+hosted_zone_id = "YOUR_ROUTE53_HOSTED_ZONE_ID"
+enable_https   = true
+```
+
+The generated ALB DNS name cannot use a trusted ACM certificate directly.
 
 ## Deploy
 
-Initialize providers:
-
 ```powershell
 terraform init
-```
-
-Format and validate:
-
-```powershell
 terraform fmt -recursive
 terraform validate
-```
-
-Preview changes:
-
-```powershell
 terraform plan
-```
-
-Apply changes:
-
-```powershell
 terraform apply
 ```
 
-## Test The Web App
+## Outputs
 
-Get the application URL:
+After apply:
 
 ```powershell
-terraform output application_url
+terraform output
+terraform output -raw application_url
+terraform output -raw inventory_api_url
 ```
 
-Test it from PowerShell:
+## Validate The Web App
 
 ```powershell
 $url = terraform output -raw application_url
@@ -215,23 +179,19 @@ Expected result:
 StatusCode: 200
 ```
 
-Check Auto Scaling instances:
+Check EC2 and target health:
 
 ```powershell
+$asgName = terraform output -raw autoscaling_group_name
 aws autoscaling describe-auto-scaling-groups `
-  --auto-scaling-group-names 365scores-idan-webapp-dev-asg `
+  --auto-scaling-group-names $asgName `
   --region us-east-1 `
   --query "AutoScalingGroups[0].Instances[*].{InstanceId:InstanceId,LifecycleState:LifecycleState,HealthStatus:HealthStatus,AZ:AvailabilityZone}" `
   --output table
-```
 
-Check ALB targets:
-
-```powershell
 $tgArn = aws elbv2 describe-target-groups `
-  --names 365scores-idan-webapp-dev-tg `
   --region us-east-1 `
-  --query "TargetGroups[0].TargetGroupArn" `
+  --query "TargetGroups[?contains(TargetGroupName, 'web-')].TargetGroupArn | [0]" `
   --output text
 
 aws elbv2 describe-target-health `
@@ -241,121 +201,46 @@ aws elbv2 describe-target-health `
   --output table
 ```
 
-Expected result: both EC2 instances are `healthy`.
+## Validate The Inventory API
 
-## Test The Inventory API
-
-The inventory API endpoint:
+The API is secured with `AWS_IAM`. Unsigned browser requests should return `403`.
 
 ```powershell
-terraform output inventory_api_url
-```
-
-Unsigned browser or curl requests should fail:
-
-```powershell
-curl.exe -i https://dapa452mth.execute-api.us-east-1.amazonaws.com/dev/inventory
-```
-
-Expected result:
-
-```text
-HTTP/1.1 403 Forbidden
-{"message":"Missing Authentication Token"}
+$apiUrl = terraform output -raw inventory_api_url
+curl.exe -i $apiUrl
 ```
 
 Use API Gateway test invoke:
 
 ```powershell
+$apiUrl = terraform output -raw inventory_api_url
+$apiId = ($apiUrl -replace '^https://([^.]*)\..*','$1')
+$resourceId = aws apigateway get-resources `
+  --rest-api-id $apiId `
+  --region us-east-1 `
+  --query "items[?path=='/inventory'].id | [0]" `
+  --output text
+
 aws apigateway test-invoke-method `
-  --rest-api-id dapa452mth `
-  --resource-id cnxv4k `
+  --rest-api-id $apiId `
+  --resource-id $resourceId `
   --http-method GET `
   --region us-east-1
 ```
 
-For clean JSON output:
-
-```powershell
-$result = aws apigateway test-invoke-method `
-  --rest-api-id dapa452mth `
-  --resource-id cnxv4k `
-  --http-method GET `
-  --region us-east-1 | ConvertFrom-Json
-
-$result.body | ConvertFrom-Json | ConvertTo-Json -Depth 20
-```
-
-Expected output includes:
-
-```json
-{
-  "services_by_region": {
-    "us-east-1": [
-      {
-        "service": "apigateway",
-        "resource_count": 2
-      },
-      {
-        "service": "ec2",
-        "resource_count": 10
-      },
-      {
-        "service": "elasticloadbalancing",
-        "resource_count": 3
-      },
-      {
-        "service": "lambda",
-        "resource_count": 1
-      }
-    ]
-  }
-}
-```
-
-## HTTPS And TLS Notes
-
-There are two different TLS paths:
-
-- Browser to ALB
-- ALB to EC2
-
-Browser-facing HTTPS requires a real domain that you control, such as:
-
-```text
-app.example.com
-```
-
-Then configure:
-
-```hcl
-domain_name    = "app.example.com"
-hosted_zone_id = "YOUR_ROUTE53_HOSTED_ZONE_ID"
-enable_https   = true
-```
-
-The generated AWS ALB DNS name cannot receive a trusted ACM certificate.
-
-Backend TLS support has been prepared with `enable_backend_tls = true`, but the live web stack may still have pending Terraform changes until you apply them. Check with:
-
-```powershell
-terraform plan
-```
-
 ## Cost Warning
 
-This stack can create AWS charges.
-
-Likely billable resources include:
+This production-grade version can create AWS charges. The most important billable resources are:
 
 - Application Load Balancer
 - NAT Gateway and NAT data processing
-- EC2 instances if free-tier hours are exhausted
+- EC2 instances
+- AWS WAFv2
 - API Gateway requests
-- Lambda invocations after free-tier limits
-- CloudWatch Logs
+- Lambda invocations
+- CloudWatch Logs, metrics, alarms, VPC Flow Logs, and X-Ray
 
-Destroy the stack when finished testing:
+Destroy when finished testing:
 
 ```powershell
 terraform destroy

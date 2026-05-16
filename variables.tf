@@ -57,6 +57,12 @@ variable "single_nat_gateway" {
   default     = true
 }
 
+variable "enable_vpc_flow_logs" {
+  description = "When true, publish VPC Flow Logs to CloudWatch Logs."
+  type        = bool
+  default     = true
+}
+
 variable "instance_type" {
   description = "EC2 instance type for the web servers."
   type        = string
@@ -111,6 +117,18 @@ variable "max_size" {
   default     = 2
 }
 
+variable "enable_asg_cpu_scaling" {
+  description = "When true, attach target-tracking CPU scaling to the Auto Scaling group."
+  type        = bool
+  default     = true
+}
+
+variable "asg_target_cpu_utilization" {
+  description = "Average ASG CPU percentage that target-tracking scaling should maintain."
+  type        = number
+  default     = 50
+}
+
 variable "health_check_path" {
   description = "Path used by the ALB target group health check."
   type        = string
@@ -135,10 +153,52 @@ variable "enable_https" {
   default     = false
 }
 
+variable "enable_deletion_protection" {
+  description = "When true, enable ALB deletion protection. Recommended for production environments."
+  type        = bool
+  default     = false
+}
+
 variable "certificate_domain_name" {
   description = "Optional certificate name. Defaults to domain_name when blank."
   type        = string
   default     = ""
+}
+
+variable "enable_waf" {
+  description = "When true, attach an AWS WAFv2 web ACL with AWS managed rule groups to the ALB."
+  type        = bool
+  default     = true
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch log retention in days for Lambda, API Gateway, and VPC Flow Logs."
+  type        = number
+  default     = 30
+}
+
+variable "api_throttle_rate_limit" {
+  description = "API Gateway steady-state request rate limit per second."
+  type        = number
+  default     = 20
+}
+
+variable "api_throttle_burst_limit" {
+  description = "API Gateway burst request limit."
+  type        = number
+  default     = 40
+}
+
+variable "lambda_reserved_concurrent_executions" {
+  description = "Reserved concurrency for the inventory Lambda. Use -1 for unreserved concurrency."
+  type        = number
+  default     = 5
+}
+
+variable "alarm_actions" {
+  description = "Optional SNS topic ARNs or other action ARNs notified by CloudWatch alarms."
+  type        = list(string)
+  default     = []
 }
 
 variable "tags" {

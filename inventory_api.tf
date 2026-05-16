@@ -30,23 +30,54 @@ resource "aws_iam_role_policy_attachment" "inventory_api_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_role_policy_attachment" "inventory_api_xray" {
+  role       = aws_iam_role.inventory_api_lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
+resource "aws_iam_policy" "inventory_api_read_only" {
+  name        = "${local.name_prefix}-inventory-api-read-only"
+  description = "Least-privilege read permissions used by the AWS inventory API."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeRegions",
+          "tag:GetResources",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "inventory_api_read_only" {
   role       = aws_iam_role.inventory_api_lambda.name
-  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+  policy_arn = aws_iam_policy.inventory_api_read_only.arn
 }
 
 resource "aws_lambda_function" "inventory_api" {
-  function_name    = "${local.name_prefix}-inventory-api"
-  role             = aws_iam_role.inventory_api_lambda.arn
-  runtime          = "python3.12"
-  handler          = "aws_inventory_api.handler"
-  filename         = data.archive_file.inventory_api.output_path
-  source_code_hash = data.archive_file.inventory_api.output_base64sha256
-  timeout          = 60
-  memory_size      = 256
+  function_name                  = "${local.name_prefix}-inventory-api"
+  role                           = aws_iam_role.inventory_api_lambda.arn
+  runtime                        = "python3.12"
+  handler                        = "aws_inventory_api.handler"
+  filename                       = data.archive_file.inventory_api.output_path
+  source_code_hash               = data.archive_file.inventory_api.output_base64sha256
+  timeout                        = 60
+  memory_size                    = 256
+  reserved_concurrent_executions = var.lambda_reserved_concurrent_executions
+
+  tracing_config {
+    mode = "Active"
+  }
 
   depends_on = [
+    aws_cloudwatch_log_group.inventory_api_lambda,
     aws_iam_role_policy_attachment.inventory_api_logs,
+    aws_iam_role_policy_attachment.inventory_api_xray,
     aws_iam_role_policy_attachment.inventory_api_read_only,
   ]
 
@@ -66,6 +97,10 @@ resource "aws_api_gateway_rest_api" "inventory" {
   tags = {
     Name = "${local.name_prefix}-inventory-api"
   }
+
+  depends_on = [
+    aws_api_gateway_account.this,
+  ]
 }
 
 resource "aws_api_gateway_resource" "inventory" {
@@ -120,11 +155,43 @@ resource "aws_api_gateway_deployment" "inventory" {
 }
 
 resource "aws_api_gateway_stage" "inventory" {
-  rest_api_id   = aws_api_gateway_rest_api.inventory.id
-  deployment_id = aws_api_gateway_deployment.inventory.id
-  stage_name    = var.environment
+  rest_api_id          = aws_api_gateway_rest_api.inventory.id
+  deployment_id        = aws_api_gateway_deployment.inventory.id
+  stage_name           = var.environment
+  xray_tracing_enabled = true
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.inventory_api_gateway.arn
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      ip             = "$context.identity.sourceIp"
+      caller         = "$context.identity.caller"
+      user           = "$context.identity.user"
+      requestTime    = "$context.requestTime"
+      httpMethod     = "$context.httpMethod"
+      resourcePath   = "$context.resourcePath"
+      status         = "$context.status"
+      protocol       = "$context.protocol"
+      responseLength = "$context.responseLength"
+      errorMessage   = "$context.error.message"
+    })
+  }
 
   tags = {
     Name = "${local.name_prefix}-inventory-api"
+  }
+}
+
+resource "aws_api_gateway_method_settings" "inventory_all" {
+  rest_api_id = aws_api_gateway_rest_api.inventory.id
+  stage_name  = aws_api_gateway_stage.inventory.stage_name
+  method_path = "*/*"
+
+  settings {
+    metrics_enabled        = true
+    logging_level          = "INFO"
+    data_trace_enabled     = false
+    throttling_rate_limit  = var.api_throttle_rate_limit
+    throttling_burst_limit = var.api_throttle_burst_limit
   }
 }
