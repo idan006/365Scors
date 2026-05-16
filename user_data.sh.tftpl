@@ -1,0 +1,86 @@
+#!/bin/bash
+set -euxo pipefail
+
+dnf update -y
+dnf install -y nginx openssl
+
+cat >/usr/share/nginx/html/index.html <<HTML
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${project_name} ${environment}</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: Arial, sans-serif;
+        background: #f6f7f9;
+        color: #20242a;
+      }
+      main {
+        width: min(720px, calc(100vw - 48px));
+        padding: 32px;
+        border: 1px solid #d7dce2;
+        border-radius: 8px;
+        background: #ffffff;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 32px;
+      }
+      p {
+        margin: 0;
+        line-height: 1.5;
+      }
+      code {
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: #eef1f4;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${project_name}</h1>
+      <p>Served from EC2 instance <code>$(TOKEN=$(curl -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" -s http://169.254.169.254/latest/api/token) && curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)</code> in the <code>${environment}</code> environment.</p>
+    </main>
+  </body>
+</html>
+HTML
+
+if [ "${enable_backend_tls}" = "true" ]; then
+  mkdir -p /etc/nginx/tls
+  openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+    -keyout /etc/nginx/tls/server.key \
+    -out /etc/nginx/tls/server.crt \
+    -subj "/CN=${project_name}-${environment}.internal"
+
+  cat >/etc/nginx/conf.d/webapp.conf <<NGINX
+server {
+    listen ${backend_port} ssl;
+    server_name _;
+
+    ssl_certificate /etc/nginx/tls/server.crt;
+    ssl_certificate_key /etc/nginx/tls/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+NGINX
+else
+  if [ "${app_port}" != "80" ]; then
+    sed -i "s/listen       80;/listen       ${app_port};/" /etc/nginx/nginx.conf
+  fi
+fi
+
+systemctl enable nginx
+systemctl restart nginx

@@ -1,0 +1,26 @@
+aws_region   = "us-east-1"
+project_name = "365scores-idan-webapp"
+environment  = "dev"
+
+# Optional SSH access. Leave null/empty for no inbound SSH.
+key_name                = null
+allowed_ssh_cidr_blocks = []
+
+# Custom domain. The hosted zone must already exist in Route 53.
+domain_name    = ""
+hosted_zone_id = ""
+
+# Set true to create an ACM certificate and redirect HTTP to HTTPS.
+enable_https = false
+
+instance_type      = "t3.micro"
+enable_backend_tls = true
+enable_nat_gateway = true
+single_nat_gateway = true
+min_size           = 2
+desired_capacity   = 2
+max_size           = 2
+
+tags = {
+  Owner = "365Scores"
+}
